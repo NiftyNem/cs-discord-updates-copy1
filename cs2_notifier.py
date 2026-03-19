@@ -10,9 +10,7 @@ from bs4 import BeautifulSoup
 # CONFIG
 # ==============================
 RSS_SOURCES = [
-    "https://store.steampowered.com/feeds/news/app/730/",
-    "https://blog.counter-strike.net/index.php/category/updates/feed/",
-    "https://steamcommunity.com/games/730/rss/"
+    "https://store.steampowered.com/feeds/news/app/730/"
 ]
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
