@@ -4,6 +4,7 @@ import os
 import re
 import json
 from datetime import datetime
+from bs4 import BeautifulSoup
 
 # ==============================
 # CONFIG
@@ -18,57 +19,86 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 LAST_UPDATE_FILE = "last_update.txt"
 
 # ==============================
-# HTML CLEANER (nested lists)
+# HTML CLEANER (ROBUST)
 # ==============================
 def clean_html(raw_html):
-    """
-    Cleans HTML from the Steam feed and correctly formats nested lists for Discord.
-    """
+    soup = BeautifulSoup(raw_html, "html.parser")
 
-    # --- Recursive function for <ul>/<li> lists ---
-    def parse_list(html):
-        # Replace sub-lists first
-        def sub_list(match):
-            sub = match.group(1)
-            # Replace <li> inside the sublist (Discord applies auto-indent with -)
-            sub = re.sub(r'<li>(.*?)</li>', r'  - \1', sub, flags=re.DOTALL)
-            # Process any nested <ul> within
-            sub = re.sub(r'<ul>(.*?)</ul>', sub_list, sub, flags=re.DOTALL)
-            return sub
+    # ----------------------------
+    # 1. Headers tipo Steam (.bb_h3)
+    # ----------------------------
+    for h in soup.select(".bb_h3"):
+        h.replace_with(f"\n### {h.get_text(strip=True)}\n")
 
-        html = re.sub(r'<ul>(.*?)</ul>', sub_list, html, flags=re.DOTALL)
-        # Replace main <li> items
-        html = re.sub(r'<li>(.*?)</li>', r'- \1', html, flags=re.DOTALL)
-        return html
+    # ----------------------------
+    # 2. Links → Markdown
+    # ----------------------------
+    for a in soup.find_all("a"):
+        text = a.get_text(strip=True)
+        href = a.get("href", "")
+        if text and href:
+            a.replace_with(f"[{text}]({href})")
 
-    cleantext = parse_list(raw_html)
+    # ----------------------------
+    # 3. Imágenes (solo 1)
+    # ----------------------------
+    images = soup.find_all("img")
+    for i, img in enumerate(images):
+        src = img.get("src", "")
+        if i == 0 and src:
+            img.replace_with(f"\n{src}\n")
+        else:
+            img.decompose()
 
-    # --- Clean remaining HTML ---
-    cleantext = re.sub(r'<(br|p|/li|/ul|/p)>', '\n', cleantext)
-    cleantext = re.sub(r'<.*?>', '', cleantext)
-    cleantext = cleantext.replace('\r\n', '\n').replace('\r', '\n')
-    cleantext = cleantext.strip()
+    # ----------------------------
+    # 4. Listas con indentación
+    # ----------------------------
+    def parse_list(ul, depth=0):
+        lines = []
+        for li in ul.find_all("li", recursive=False):
+            prefix = "  " * depth + "- "
+            text = li.get_text(" ", strip=True)
 
-    # --- Line by line to clean spaces and breaks ---
-    final_lines = []
-    for line in cleantext.split('\n'):
-        content = line.strip()
-        if content:
-            final_lines.append(content)
-    
-    # Add a line break between main sections
-    result = '\n'.join(final_lines)
-    result = re.sub(r'\n(\[.*?\]|\b[A-Z\s]{4,}\b)', r'\n\n\1', result)
+            sub_ul = li.find("ul")
+            if sub_ul:
+                sub_ul.extract()
+                lines.append(prefix + text)
+                lines.extend(parse_list(sub_ul, depth + 1))
+            else:
+                lines.append(prefix + text)
 
-    # --- Protect technical identifiers ---
-    def protect_identifiers(match):
-        token = match.group(0)
-        if "_" in token or "." in token or (any(c.isupper() for c in token[1:]) and token[0].isupper()):
-            return f"`{token}`"
-        return token
+        return lines
 
-    result = re.sub(r'\b[A-Za-z_][A-Za-z0-9_.]*\b', protect_identifiers, result)
-    return result
+    for ul in soup.find_all("ul"):
+        lines = parse_list(ul)
+        ul.replace_with("\n" + "\n".join(lines) + "\n")
+
+    # ----------------------------
+    # 5. Saltos de línea
+    # ----------------------------
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+
+    # ----------------------------
+    # 6. Texto base
+    # ----------------------------
+    text = soup.get_text("\n")
+
+    # ----------------------------
+    # 7. Headers tipo [GAMEPLAY]
+    # ----------------------------
+    text = re.sub(
+        r'\\?\[\s*(.*?)\s*\]',
+        lambda m: f"\n### {m.group(1).title()}\n",
+        text
+    )
+
+    # ----------------------------
+    # 8. Limpiar espacios
+    # ----------------------------
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    return text.strip()
 
 # ==============================
 # STORAGE
@@ -94,12 +124,12 @@ def build_payload(entry):
         content = entry.get('summary', entry.get('description', ''))
 
     clean_content = clean_html(content)
-    
-    # Add visual separator only if there is content
-    if clean_content:
-        clean_content = clean_content + "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Safe limit for embed description = 4096
+    # Separador visual
+    if clean_content:
+        clean_content += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Límite Discord (embed)
     if len(clean_content) > 4000:
         clean_content = clean_content[:3990] + "..."
 
@@ -108,7 +138,7 @@ def build_payload(entry):
 
     payload = {
         "embeds": [{
-            "title": f"✨ {entry.title}",
+            "title": f"📰 {entry.title}",
             "description": clean_content,
             "url": entry.link,
             "color": 3092790,
@@ -125,7 +155,7 @@ def build_payload(entry):
                 "components": [
                     {
                         "type": 2,
-                        "style": 5,  # LINK button
+                        "style": 5,
                         "label": "View Full Notes ↗️",
                         "url": entry.link
                     }
@@ -141,11 +171,13 @@ def build_payload(entry):
 # ==============================
 def send_to_discord(entry):
     payload = build_payload(entry)
+
     if not DISCORD_WEBHOOK_URL:
-        # Print payload for debugging if no webhook is set
         print(json.dumps(payload, indent=4, ensure_ascii=False))
         return
+
     response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+
     if response.status_code in (200, 204):
         print("Message sent successfully.")
     else:
@@ -156,6 +188,7 @@ def send_to_discord(entry):
 # ==============================
 def main():
     feed = None
+
     for url in RSS_SOURCES:
         try:
             response = requests.get(
@@ -177,7 +210,6 @@ def main():
     latest_id = getattr(latest_entry, 'id', latest_entry.link)
     last_id = get_last_saved_id()
 
-    # Send update if ID is new or if testing without a webhook
     if latest_id != last_id or not DISCORD_WEBHOOK_URL:
         send_to_discord(latest_entry)
         if DISCORD_WEBHOOK_URL:
