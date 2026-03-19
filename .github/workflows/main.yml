@@ -1,12 +1,14 @@
 name: Check CS2 Updates
+
 on:
   schedule:
-    - cron: '*/30 * * * *' # Se ejecuta cada 30 minutos
-  workflow_dispatch: # Permite ejecutarlo manualmente para probar
+    - cron: '*/30 * * * *' # Cada 30 minutos
+  workflow_dispatch: # Permite ejecución manual
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -17,7 +19,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install feedparser requests
+        run: pip install feedparser requests beautifulsoup4
 
       - name: Run script
         env:
@@ -28,6 +30,7 @@ jobs:
         run: |
           git config --global user.name 'github-actions'
           git config --global user.email 'github-actions@github.com'
+          git pull
           git add last_update.txt
           git commit -m "Update last seen patch ID" || exit 0
           git push
