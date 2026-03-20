@@ -17,29 +17,23 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK")
 LAST_UPDATE_FILE = "last_update.txt"
 
 # ==============================
-# HTML CLEANER (ROBUST)
+# HTML CLEANER
 # ==============================
 def clean_html(raw_html):
     soup = BeautifulSoup(raw_html, "html.parser")
 
-    # ----------------------------
-    # 1. Headers tipo Steam (.bb_h3)
-    # ----------------------------
+    # Headers Steam
     for h in soup.select(".bb_h3"):
         h.replace_with(f"\n### {h.get_text(strip=True)}\n")
 
-    # ----------------------------
-    # 2. Links → Markdown
-    # ----------------------------
+    # Links → Markdown
     for a in soup.find_all("a"):
         text = a.get_text(strip=True)
         href = a.get("href", "")
         if text and href:
             a.replace_with(f"[{text}]({href})")
 
-    # ----------------------------
-    # 3. Imágenes (solo 1)
-    # ----------------------------
+    # Imágenes (solo 1)
     images = soup.find_all("img")
     for i, img in enumerate(images):
         src = img.get("src", "")
@@ -48,9 +42,7 @@ def clean_html(raw_html):
         else:
             img.decompose()
 
-    # ----------------------------
-    # 4. Listas con indentación
-    # ----------------------------
+    # Listas
     def parse_list(ul, depth=0):
         lines = []
         for li in ul.find_all("li", recursive=False):
@@ -71,45 +63,51 @@ def clean_html(raw_html):
         lines = parse_list(ul)
         ul.replace_with("\n" + "\n".join(lines) + "\n")
 
-    # ----------------------------
-    # 5. Saltos de línea
-    # ----------------------------
+    # Saltos de línea
     for br in soup.find_all("br"):
         br.replace_with("\n")
 
-    # ----------------------------
-    # 6. Texto base
-    # ----------------------------
+    # Texto base
     text = soup.get_text("\n")
 
-    # ----------------------------
-    # 7. Headers tipo [GAMEPLAY]
-    # ----------------------------
+    # Headers tipo [GAMEPLAY]
     text = re.sub(
         r'\\?\[\s*(.*?)\s*\]',
         lambda m: f"\n### {m.group(1).title()}\n",
         text
     )
 
-    # ----------------------------
-    # 8. Limpiar espacios
-    # ----------------------------
+    # Limpieza
     text = re.sub(r'\n{3,}', '\n\n', text)
 
     return text.strip()
 
 # ==============================
-# STORAGE
+# STORAGE (MULTI-ID)
 # ==============================
-def get_last_saved_id():
+def get_saved_ids():
     if os.path.exists(LAST_UPDATE_FILE):
         with open(LAST_UPDATE_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    return None
+            return set(f.read().splitlines())
+    return set()
 
-def save_last_id(entry_id):
+def save_id(entry_id):
+    ids = get_saved_ids()
+    ids.add(entry_id)
+
+    # Mantener últimos 20
+    ids = list(ids)[-20:]
+
     with open(LAST_UPDATE_FILE, "w", encoding="utf-8") as f:
-        f.write(entry_id)
+        f.write("\n".join(ids))
+
+# ==============================
+# ID NORMALIZADO
+# ==============================
+def get_entry_id(entry):
+    link = entry.link.strip()
+    link = re.sub(r'\?.*$', '', link)
+    return link
 
 # ==============================
 # DISCORD PAYLOAD
@@ -123,18 +121,16 @@ def build_payload(entry):
 
     clean_content = clean_html(content)
 
-    # Separador visual
     if clean_content:
         clean_content += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Límite Discord (embed)
     if len(clean_content) > 4000:
         clean_content = clean_content[:3990] + "..."
 
     image_url = "https://cdn.akamai.steamstatic.com/steam/apps/730/capsule_617x353.jpg"
     current_date = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    payload = {
+    return {
         "embeds": [{
             "title": f"📰 {entry.title}",
             "description": clean_content,
@@ -162,8 +158,6 @@ def build_payload(entry):
         ]
     }
 
-    return payload
-
 # ==============================
 # DISCORD SENDER
 # ==============================
@@ -182,7 +176,7 @@ def send_to_discord(entry):
         print(f"Error {response.status_code}: {response.text}")
 
 # ==============================
-# MAIN
+# MAIN (FIXED)
 # ==============================
 def main():
     feed = None
@@ -204,14 +198,22 @@ def main():
     if not feed or not feed.entries:
         return
 
-    latest_entry = feed.entries[0]
-    latest_id = getattr(latest_entry, 'id', latest_entry.link)
-    last_id = get_last_saved_id()
+    saved_ids = get_saved_ids()
 
-    if latest_id != last_id or not DISCORD_WEBHOOK_URL:
-        send_to_discord(latest_entry)
-        if DISCORD_WEBHOOK_URL:
-            save_last_id(latest_id)
+    # Ordenar por fecha (clave)
+    entries = sorted(
+        feed.entries,
+        key=lambda x: x.published_parsed,
+        reverse=True
+    )
+
+    for entry in entries:
+        entry_id = get_entry_id(entry)
+
+        if entry_id not in saved_ids:
+            send_to_discord(entry)
+            save_id(entry_id)
+            break  # Solo uno por ejecución
 
 if __name__ == "__main__":
     main()
