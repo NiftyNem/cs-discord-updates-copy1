@@ -33,7 +33,7 @@ def clean_html(raw_html):
         if text and href:
             a.replace_with(f"[{text}]({href})")
 
-    # Imágenes (solo 1)
+    # Images (solo la primera)
     images = soup.find_all("img")
     for i, img in enumerate(images):
         src = img.get("src", "")
@@ -42,7 +42,7 @@ def clean_html(raw_html):
         else:
             img.decompose()
 
-    # Listas
+    # Lists
     def parse_list(ul, depth=0):
         lines = []
         for li in ul.find_all("li", recursive=False):
@@ -63,46 +63,39 @@ def clean_html(raw_html):
         lines = parse_list(ul)
         ul.replace_with("\n" + "\n".join(lines) + "\n")
 
-    # Saltos de línea
+    # Line breaks
     for br in soup.find_all("br"):
         br.replace_with("\n")
 
-    # Texto base
     text = soup.get_text("\n")
 
-    # Headers tipo [GAMEPLAY]
+    # Headers tipo [SECTION]
     text = re.sub(
-        r'\\?\[\s*(.*?)\s*\]',
+        r'\[\s*(.*?)\s*\]',
         lambda m: f"\n### {m.group(1).title()}\n",
         text
     )
 
-    # Limpieza
+    # Cleanup
     text = re.sub(r'\n{3,}', '\n\n', text)
 
     return text.strip()
 
 # ==============================
-# STORAGE (MULTI-ID)
+# STORAGE (LAST ID ONLY)
 # ==============================
-def get_saved_ids():
+def get_last_id():
     if os.path.exists(LAST_UPDATE_FILE):
         with open(LAST_UPDATE_FILE, "r", encoding="utf-8") as f:
-            return set(f.read().splitlines())
-    return set()
+            return f.read().strip()
+    return None
 
-def save_id(entry_id):
-    ids = get_saved_ids()
-    ids.add(entry_id)
-
-    # Mantener últimos 20
-    ids = list(ids)[-20:]
-
+def save_last_id(entry_id):
     with open(LAST_UPDATE_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(ids))
+        f.write(entry_id)
 
 # ==============================
-# ID NORMALIZADO
+# ID NORMALIZATION
 # ==============================
 def get_entry_id(entry):
     link = entry.link.strip()
@@ -171,12 +164,12 @@ def send_to_discord(entry):
     response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
 
     if response.status_code in (200, 204):
-        print("Message sent successfully.")
+        print(f"Sent: {entry.title}")
     else:
         print(f"Error {response.status_code}: {response.text}")
 
 # ==============================
-# MAIN (FIXED)
+# MAIN
 # ==============================
 def main():
     feed = None
@@ -198,22 +191,37 @@ def main():
     if not feed or not feed.entries:
         return
 
-    saved_ids = get_saved_ids()
+    last_id = get_last_id()
 
-    # Ordenar por fecha (clave)
+    # Orden cronológico (viejo -> nuevo)
     entries = sorted(
         feed.entries,
-        key=lambda x: x.published_parsed,
-        reverse=True
+        key=lambda x: x.published_parsed
     )
+
+    new_entries = []
+    found_last = last_id is None
 
     for entry in entries:
         entry_id = get_entry_id(entry)
 
-        if entry_id not in saved_ids:
-            send_to_discord(entry)
-            save_id(entry_id)
-            break  # Solo uno por ejecución
+        if entry_id == last_id:
+            found_last = True
+            continue
+
+        if not found_last:
+            continue
+
+        new_entries.append(entry)
+
+    # Enviar en orden correcto
+    for entry in new_entries:
+        send_to_discord(entry)
+
+    # Guardar el último ID procesado
+    if new_entries:
+        latest_id = get_entry_id(new_entries[-1])
+        save_last_id(latest_id)
 
 if __name__ == "__main__":
     main()
