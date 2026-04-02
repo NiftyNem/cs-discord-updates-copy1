@@ -59,11 +59,9 @@ def clean_html(raw_html):
 
         return lines
 
-    # 🔧 FIX AQUÍ (solo esto cambia)
-    for ul in list(soup.find_all("ul")):
+    for ul in soup.find_all("ul"):
         lines = parse_list(ul)
-        if ul.parent:
-            ul.replace_with("\n" + "\n".join(lines) + "\n")
+        ul.replace_with("\n" + "\n".join(lines) + "\n")
 
     # Line breaks
     for br in soup.find_all("br"):
