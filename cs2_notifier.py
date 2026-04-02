@@ -24,48 +24,59 @@ def clean_html(raw_html):
 
     # Headers Steam
     for h in soup.select(".bb_h3"):
-        h.replace_with(f"\n### {h.get_text(strip=True)}\n")
+        if h.parent:
+            h.replace_with(f"\n### {h.get_text(strip=True)}\n")
 
     # Links → Markdown
     for a in soup.find_all("a"):
         text = a.get_text(strip=True)
         href = a.get("href", "")
-        if text and href:
+        if text and href and a.parent:
             a.replace_with(f"[{text}]({href})")
 
     # Images (solo la primera)
     images = soup.find_all("img")
     for i, img in enumerate(images):
         src = img.get("src", "")
-        if i == 0 and src:
+        if i == 0 and src and img.parent:
             img.replace_with(f"\n{src}\n")
         else:
             img.decompose()
 
-    # Lists
+    # Lists - Lógica mejorada para evitar el ValueError
     def parse_list(ul, depth=0):
         lines = []
+        # Solo buscamos hijos directos para evitar duplicados en la recursión
         for li in ul.find_all("li", recursive=False):
             prefix = "  " * depth + "- "
-            text = li.get_text(" ", strip=True)
-
+            
+            # Clonamos el contenido para no destruir el original prematuramente
             sub_ul = li.find("ul")
             if sub_ul:
-                sub_ul.extract()
-                lines.append(prefix + text)
+                # Extraemos el texto del li sin el texto de la sublista
+                sub_ul_text = sub_ul.get_text()
+                li_text = li.get_text(strip=True).replace(sub_ul_text, "").strip()
+                lines.append(prefix + li_text)
                 lines.extend(parse_list(sub_ul, depth + 1))
             else:
-                lines.append(prefix + text)
-
+                lines.append(prefix + li.get_text(strip=True))
         return lines
 
-    for ul in soup.find_all("ul"):
-        lines = parse_list(ul)
-        ul.replace_with("\n" + "\n".join(lines) + "\n")
+    # Procesamos de abajo hacia arriba para no perder referencias
+    for ul in reversed(soup.find_all("ul")):
+        if ul.parent:
+            # Si la lista tiene un padre que es un LI, es una lista anidada. 
+            # Dejamos que la lista padre la maneje para no duplicar.
+            if ul.parent.name == "li":
+                continue
+            
+            lines = parse_list(ul)
+            ul.replace_with("\n" + "\n".join(lines) + "\n")
 
     # Line breaks
     for br in soup.find_all("br"):
-        br.replace_with("\n")
+        if br.parent:
+            br.replace_with("\n")
 
     text = soup.get_text("\n")
 
@@ -76,7 +87,7 @@ def clean_html(raw_html):
         text
     )
 
-    # Cleanup
+    # Cleanup extra
     text = re.sub(r'\n{3,}', '\n\n', text)
 
     return text.strip()
