@@ -42,28 +42,27 @@ def clean_html(raw_html):
         else:
             img.decompose()
 
-    # Lists (FIXED)
+    # Lists
     def parse_list(ul, depth=0):
         lines = []
         for li in ul.find_all("li", recursive=False):
             prefix = "  " * depth + "- "
+            text = li.get_text(" ", strip=True)
 
             sub_ul = li.find("ul")
             if sub_ul:
-                sub_lines = parse_list(sub_ul, depth + 1)
-                sub_ul.decompose()
+                sub_ul.extract()
+                lines.append(prefix + text)
+                lines.extend(parse_list(sub_ul, depth + 1))
             else:
-                sub_lines = []
-
-            text = li.get_text(" ", strip=True)
-            lines.append(prefix + text)
-            lines.extend(sub_lines)
+                lines.append(prefix + text)
 
         return lines
 
+    # 🔧 FIX AQUÍ (solo esto cambia)
     for ul in list(soup.find_all("ul")):
         lines = parse_list(ul)
-        if ul.parent is not None:
+        if ul.parent:
             ul.replace_with("\n" + "\n".join(lines) + "\n")
 
     # Line breaks
