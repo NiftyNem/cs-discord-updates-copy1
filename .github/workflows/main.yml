@@ -2,35 +2,42 @@ name: Check CS2 Updates
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  check-updates:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
+          cache: "pip"
 
       - name: Install dependencies
-        run: pip install feedparser requests beautifulsoup4
+        run: pip install -r requirements.txt
 
-      - name: Run script
+      - name: Run notifier
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_PING_ROLE_ID: ${{ secrets.DISCORD_PING_ROLE_ID }}
         run: python cs2_notifier.py
 
-      - name: Commit changes
+      - name: Commit last_update.txt
         run: |
-          git config --global user.name 'github-actions'
-          git config --global user.email 'github-actions@github.com'
-          git pull
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase
           git add last_update.txt
-          git commit -m "Update last seen patch ID" || exit 0
+          git diff --cached --quiet || git commit -m "chore: update last seen patch ID"
           git push
