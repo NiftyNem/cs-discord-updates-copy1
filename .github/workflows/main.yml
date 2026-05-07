@@ -18,6 +18,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Pull latest changes
+        run: git pull --rebase
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -37,7 +40,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase
           git add last_update.txt
           git diff --cached --quiet || git commit -m "chore: update last seen patch ID"
           git push
